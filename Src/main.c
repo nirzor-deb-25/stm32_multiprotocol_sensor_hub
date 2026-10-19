@@ -7,6 +7,9 @@
 #include "bme280.h"
 #include "spi.h"
 #include "lis3dsh.h"
+#include "hub_uart.h"
+#include <stdio.h>
+#include <inttypes.h>
 
 #define BLUE_LED_MASK (1UL << 15)
 
@@ -212,6 +215,57 @@ static void update_accelerometer(void)
     hub_diagnostics.accelerometer_valid = 1U;
 }
 
+volatile uint32_t hub_report_errors = 0U;
+
+static void send_hub_report(void)
+{
+    char text[256];
+
+    int32_t temperature = hub_diagnostics.temperature_centi_c;
+
+    uint32_t magnitude = (temperature < 0)
+        ? (uint32_t)(-(int64_t)temperature)
+        : (uint32_t)temperature;
+
+    int length = snprintf(
+        text,
+        sizeof(text),
+        "HUB seq=%" PRIu32
+        " T=%s%" PRIu32 ".%02" PRIu32 "C"
+        " temp_valid=%" PRIu32
+        " X=%" PRId32
+        " Y=%" PRId32
+        " Z=%" PRId32 " mg"
+        " accel_valid=%" PRIu32
+        " temp_err=%" PRIu32
+        " accel_err=%" PRIu32
+        " tx_timeout=%" PRIu32 "\r\n",
+        hub_diagnostics.loop_count,
+        (temperature < 0) ? "-" : "",
+        magnitude / 100U,
+        magnitude % 100U,
+        hub_diagnostics.temperature_valid,
+        hub_diagnostics.x_mg,
+        hub_diagnostics.y_mg,
+        hub_diagnostics.z_mg,
+        hub_diagnostics.accelerometer_valid,
+        hub_diagnostics.temperature_errors,
+        hub_diagnostics.accelerometer_errors,
+        hub_uart_diagnostics.timeouts
+    );
+
+    if ((length < 0) || ((size_t)length >= sizeof(text)))
+    {
+        hub_report_errors++;
+        return;
+    }
+
+    if (!hub_uart_write(text, (size_t)length))
+    {
+        hub_report_errors++;
+    }
+}
+
 int main(void)
 {
     timing_init();
@@ -219,6 +273,7 @@ int main(void)
 
     i2c_probe_init();
     spi_init();
+    hub_uart_init();
 
     timing_delay_ms(100U);
 
@@ -234,6 +289,7 @@ int main(void)
         update_accelerometer();
 
         hub_diagnostics.loop_count++;
+        send_hub_report();
 
         blue_on = !blue_on;
 
