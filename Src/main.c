@@ -4,23 +4,23 @@
 #include "stm32_regs.h"
 #include "timing.h"
 #include "i2c_probe.h"
+#include "bme280.h"
 
 #define BLUE_LED_MASK (1UL << 15)
 
 typedef struct
 {
-    uint32_t scan_count;
-    uint32_t idle_lines;
-    uint32_t result_76;
-    uint32_t result_77;
-    uint32_t final_lines;
-    uint32_t id_read_result;
-    uint32_t chip_id;
-    uint32_t id_success_count;
-    uint32_t id_error_count;
-} hub_probe_diagnostics_t;
+    uint32_t initialized;
+    uint32_t driver_result;
+    uint32_t i2c_result;
+    uint32_t sample_count;
+    uint32_t error_count;
+    uint32_t raw_temperature;
+    int32_t temperature_centi_c;
+    uint32_t sample_valid;
+} hub_temperature_diagnostics_t;
 
-volatile hub_probe_diagnostics_t hub_probe = {0};
+volatile hub_temperature_diagnostics_t hub_temperature = {0};
 
 static void heartbeat_init(void)
 {
@@ -46,54 +46,59 @@ int main(void)
 
     timing_delay_ms(100U);
 
+    bool initialized = false;
     bool blue_on = false;
 
     for (;;)
     {
-        hub_probe.idle_lines = i2c_probe_lines();
+        hub_temperature.sample_valid = 0U;
 
-        hub_probe.result_76 =
-            (uint32_t)i2c_probe_address(0x76U);
-
-        timing_delay_ms(2U);
-
-        hub_probe.result_77 =
-            (uint32_t)i2c_probe_address(0x77U);
-
-        timing_delay_ms(2U);
-
-        uint8_t chip_id = 0U;
-
-        i2c_probe_result_t result = i2c_probe_read_register(
-            0x77U,
-            0xD0U,
-            &chip_id
-        );
-
-        hub_probe.id_read_result = (uint32_t)result;
-
-        if (result == I2C_PROBE_ACK)
+        if (!initialized)
         {
-            hub_probe.chip_id = chip_id;
+            bme280_result_t result = bme280_init(0x77U);
 
-            if (chip_id == 0x60U)
+            hub_temperature.driver_result = (uint32_t)result;
+            hub_temperature.i2c_result = bme280_last_i2c_result;
+
+            initialized = (result == BME280_OK);
+            hub_temperature.initialized = initialized ? 1U : 0U;
+
+            if (!initialized)
             {
-                hub_probe.id_success_count++;
+                hub_temperature.error_count++;
+            }
+        }
+
+        if (initialized)
+        {
+            bme280_sample_t sample;
+
+            bme280_result_t result =
+                bme280_read_temperature(&sample);
+
+            hub_temperature.driver_result = (uint32_t)result;
+            hub_temperature.i2c_result = bme280_last_i2c_result;
+
+            if (result == BME280_OK)
+            {
+                hub_temperature.raw_temperature =
+                    sample.raw_temperature;
+
+                hub_temperature.temperature_centi_c =
+                    sample.temperature_centi_c;
+
+                hub_temperature.sample_count++;
+                hub_temperature.sample_valid = 1U;
             }
             else
             {
-                hub_probe.id_error_count++;
+                hub_temperature.error_count++;
+
+                /* Retry initialization on the next iteration. */
+                initialized = false;
+                hub_temperature.initialized = 0U;
             }
         }
-        else
-        {
-            /* Mark this scan's ID as unavailable. */
-            hub_probe.chip_id = 0xFFFFFFFFUL;
-            hub_probe.id_error_count++;
-        }
-
-        hub_probe.final_lines = i2c_probe_lines();
-        hub_probe.scan_count++;
 
         blue_on = !blue_on;
 

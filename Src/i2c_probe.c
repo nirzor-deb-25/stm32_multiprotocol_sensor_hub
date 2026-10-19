@@ -322,3 +322,42 @@ finish:
 
     return result;
 }
+
+i2c_probe_result_t i2c_probe_write_register(
+    uint8_t address,
+    uint8_t register_address,
+    uint8_t value)
+{
+    if ((address < 0x08U) || (address > 0x77U))
+    {
+        return I2C_PROBE_INVALID_ADDRESS;
+    }
+
+    i2c_probe_result_t result = register_start();
+
+    if (result != I2C_PROBE_ACK)
+    {
+        return result;
+    }
+
+    result = register_write_byte(
+        (uint8_t)(address << 1)
+    );
+
+    if (result == I2C_PROBE_ACK)
+    {
+        result = register_write_byte(register_address);
+    }
+
+    if (result == I2C_PROBE_ACK)
+    {
+        result = register_write_byte(value);
+    }
+
+    if (!send_stop())
+    {
+        return I2C_PROBE_SCL_LOW;
+    }
+
+    return result;
+}

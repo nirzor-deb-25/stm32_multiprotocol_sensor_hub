@@ -27,4 +27,10 @@ i2c_probe_result_t i2c_probe_read_register(
     uint8_t *value
 );
 
+i2c_probe_result_t i2c_probe_write_register(
+    uint8_t address,
+    uint8_t register_address,
+    uint8_t value
+);
+
 #endif
